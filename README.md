@@ -120,7 +120,7 @@ Cloudflare 账号需启用 `workers.dev`。生产资源保持 `weave-web`、`wea
 
 D1 按环境名查询并复用，不存在时自动创建，再执行迁移。迁移先于 API 发布执行，应保持向后兼容；迁移和 Worker 发布不属于同一个事务。PR 关闭后数据随预览一起删除，重新打开会重新初始化。删除一个仍未关闭 PR 的源分支不是清理触发器，应关闭 PR；保留未关闭预览没有额外的定时 TTL。
 
-清理工作流使用 `pull_request_target: closed`，只检出可信 main，从事件中读取数字 PR 编号，绝不检出或执行 PR 代码。部署与清理使用同一 PR 并发锁。
+清理工作流使用 `pull_request: closed`，仅处理本仓库 PR，只检出可信 main，从事件中读取数字 PR 编号，绝不检出或执行 PR 代码。部署与清理使用同一 PR 并发锁；不依赖 GitHub 将在 2026 年 11 月限制的 `pull_request_target` 事件。
 
 ```sh
 node --test scripts/ci/*.test.mjs
