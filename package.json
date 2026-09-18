@@ -1,0 +1,21 @@
+{
+  "name": "weave",
+  "private": true,
+  "packageManager": "pnpm@10.9.0",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "scripts": {
+    "dev": "concurrently -k -n workers,web \"pnpm dev:workers\" \"pnpm --filter @weave/web dev\"",
+    "dev:workers": "pnpm --filter @weave/agents exec vite build && concurrently -k -n agents,api \"pnpm --filter @weave/agents exec vite build --watch\" \"pnpm --filter @weave/api exec wrangler dev -c wrangler.jsonc -c ../agents/dist/weave_agents/wrangler.json\"",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r typecheck",
+    "db:migrate": "pnpm --filter @weave/api db:migrate",
+    "test": "node --test scripts/*.test.mjs"
+  },
+  "devDependencies": {
+    "@flue/sdk": "2.0.8",
+    "concurrently": "10.0.5",
+    "typescript": "7.0.2"
+  }
+}

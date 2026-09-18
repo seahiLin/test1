@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "weave-agents",
+  "compatibility_date": "2026-09-17",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [],
+  "vars": {
+    "OPENROUTER_MODEL": "deepseek/deepseek-v4-flash-0731:free"
+  },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "migrations": [
+    {
+      "tag": "v1-flue-assistant",
+      "new_sqlite_classes": [
+        "FlueAssistantAgent"
+      ]
+    }
+  ]
+}

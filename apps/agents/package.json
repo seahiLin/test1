@@ -1,0 +1,30 @@
+{
+  "name": "@weave/agents",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./contracts": "./src/contracts.ts"
+  },
+  "scripts": {
+    "build": "vite build && wrangler deploy --dry-run",
+    "typecheck": "tsc --noEmit",
+    "deploy": "vite build && wrangler deploy",
+    "dev": "vite dev"
+  },
+  "dependencies": {
+    "@earendil-works/pi-ai": "0.83.0",
+    "@flue/runtime": "2.0.8",
+    "hono": "4.12.32",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@cloudflare/vite-plugin": "^1.54.11",
+    "@cloudflare/workers-types": "5.20260917.1",
+    "@flue/vite": "2.0.8",
+    "@types/node": "^22.20.3",
+    "typescript": "7.0.2",
+    "vite": "8.3.0",
+    "wrangler": "4.133.0"
+  }
+}

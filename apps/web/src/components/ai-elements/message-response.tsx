@@ -1,0 +1,30 @@
+// Adapted from Vercel AI Elements MessageResponse (Apache-2.0).
+import { cn } from '@/lib/utils'
+import { cjk } from '@streamdown/cjk'
+import { code } from '@streamdown/code'
+import { memo, type ComponentProps } from 'react'
+import { Streamdown } from 'streamdown'
+export type MessageResponseProps = ComponentProps<typeof Streamdown>;
+
+const streamdownPlugins = { cjk, code };
+
+export const MessageResponse = memo(
+  ({ className, ...props }: MessageResponseProps) => (
+    <Streamdown
+      className={cn(
+        "size-full [&>*:first-child]:mt-0 [&>*:last-child]:mb-0",
+        className
+      )}
+      plugins={streamdownPlugins}
+      {...props}
+    />
+  ),
+  (prevProps, nextProps) =>
+    prevProps.children === nextProps.children &&
+    nextProps.isAnimating === prevProps.isAnimating
+);
+
+MessageResponse.displayName = "MessageResponse";
+
+
+export default MessageResponse
