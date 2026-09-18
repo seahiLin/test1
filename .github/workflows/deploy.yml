@@ -23,7 +23,7 @@ jobs:
       (github.event_name != 'pull_request' && github.ref == 'refs/heads/main') ||
       (github.event_name == 'pull_request' && !github.event.pull_request.draft &&
        github.event.pull_request.head.repo.full_name == github.repository)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       agents: ${{ steps.changes.outputs.agents }}
       api: ${{ steps.changes.outputs.api }}
@@ -31,10 +31,10 @@ jobs:
       matrix: ${{ steps.changes.outputs.matrix }}
       any: ${{ steps.changes.outputs.any }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .node-version
       - run: node --test scripts/ci/*.test.mjs
@@ -46,22 +46,22 @@ jobs:
   build:
     needs: changes
     if: needs.changes.outputs.any == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     strategy:
       fail-fast: false
       matrix:
         package: ${{ fromJSON(needs.changes.outputs.matrix) }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86 # v6
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
         with:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
       - run: pnpm --filter @weave/${{ matrix.package }} typecheck
       - run: pnpm --filter @weave/${{ matrix.package }} build
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
         with:
           name: bundle-${{ matrix.package }}
           path: apps/${{ matrix.package }}/dist/
