@@ -2,26 +2,34 @@ name: Deploy Cloudflare
 
 on:
   push:
-    branches: ['**']
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
   contents: read
   actions: read
 
-# Keep in-flight migrations/deployments intact. Change detection uses the last
-# successful run, so coalesced pending pushes do not lose package changes.
+# The cleanup workflow uses the same PR group so it cannot race a deployment.
 concurrency:
-  group: cloudflare-${{ github.ref }}
+  group: cloudflare-${{ github.event.pull_request.number && format('pr-{0}', github.event.pull_request.number) || 'main' }}
   cancel-in-progress: false
 
 jobs:
   changes:
+    if: >-
+      (github.event_name != 'pull_request' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'pull_request' && !github.event.pull_request.draft &&
+       github.event.pull_request.head.repo.full_name == github.repository)
     runs-on: ubuntu-latest
     outputs:
       agents: ${{ steps.changes.outputs.agents }}
       api: ${{ steps.changes.outputs.api }}
       web: ${{ steps.changes.outputs.web }}
+      matrix: ${{ steps.changes.outputs.matrix }}
+      any: ${{ steps.changes.outputs.any }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -29,17 +37,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
+      - run: node --test scripts/ci/*.test.mjs
       - id: changes
         run: node scripts/ci/changes.mjs
         env:
           GH_TOKEN: ${{ github.token }}
-      - run: node --test scripts/ci/*.test.mjs
 
-  agents:
-    needs: [changes]
-    if: needs.changes.outputs.agents == 'true'
+  build:
+    needs: changes
+    if: needs.changes.outputs.any == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        package: ${{ fromJSON(needs.changes.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -48,51 +59,47 @@ jobs:
           node-version-file: .node-version
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @weave/agents typecheck
-      - name: Deploy agents
-        run: node scripts/ci/deploy.mjs agents
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
-
-  api:
-    needs: [changes, agents]
-    if: always() && needs.changes.result == 'success' && needs.changes.outputs.api == 'true' && (needs.agents.result == 'success' || needs.agents.result == 'skipped')
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
+      - run: pnpm --filter @weave/${{ matrix.package }} typecheck
+      - run: pnpm --filter @weave/${{ matrix.package }} build
+      - uses: actions/upload-artifact@v4
         with:
-          node-version-file: .node-version
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @weave/api typecheck
-      - name: Deploy api
-        run: node scripts/ci/deploy.mjs api
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
-          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+          name: bundle-${{ matrix.package }}
+          path: apps/${{ matrix.package }}/dist/
+          if-no-files-found: error
+          retention-days: 7
 
-  web:
-    needs: [changes, agents, api]
-    if: always() && needs.changes.result == 'success' && needs.changes.outputs.web == 'true' && (needs.agents.result == 'success' || needs.agents.result == 'skipped') && (needs.api.result == 'success' || needs.api.result == 'skipped')
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version-file: .node-version
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm --filter @weave/web typecheck
-      - name: Deploy web
-        run: node scripts/ci/deploy.mjs web
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+  preview:
+    needs: [changes, build]
+    if: github.event_name == 'pull_request'
+    uses: ./.github/workflows/deploy-environment.yml
+    with:
+      target: pr-${{ github.event.pull_request.number }}
+      environment: preview
+      agents: ${{ needs.changes.outputs.agents == 'true' }}
+      api: ${{ needs.changes.outputs.api == 'true' }}
+      web: ${{ needs.changes.outputs.web == 'true' }}
+    secrets: inherit
+
+  staging:
+    needs: [changes, build]
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/deploy-environment.yml
+    with:
+      target: staging
+      environment: staging
+      agents: ${{ needs.changes.outputs.agents == 'true' }}
+      api: ${{ needs.changes.outputs.api == 'true' }}
+      web: ${{ needs.changes.outputs.web == 'true' }}
+    secrets: inherit
+
+  production:
+    needs: [changes, staging]
+    if: github.event_name != 'pull_request'
+    uses: ./.github/workflows/deploy-environment.yml
+    with:
+      target: production
+      environment: production
+      agents: ${{ needs.changes.outputs.agents == 'true' }}
+      api: ${{ needs.changes.outputs.api == 'true' }}
+      web: ${{ needs.changes.outputs.web == 'true' }}
+    secrets: inherit

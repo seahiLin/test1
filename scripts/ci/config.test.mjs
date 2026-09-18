@@ -3,17 +3,14 @@ import assert from 'node:assert/strict'
 import { affectedPackages, authSecret, deployment } from './config.mjs'
 import worker from '../../apps/web/worker/index.js'
 
-test('production names remain stable and branch names are isolated and bounded', () => {
-  assert.equal(deployment('main').names.web, 'weave-web')
-  const branches = ['feat/a', 'feat-a', 'FEAT/a', '中文', 'x'.repeat(250)]
-  const names = branches.map(branch => deployment(branch).names.web)
-  assert.equal(new Set(names).size, branches.length)
-  for (const name of names) {
-    assert.match(name, /^[a-z0-9-]+$/)
-    assert.ok(name.length <= 63)
+test('only named permanent environments and numbered PR previews are accepted', () => {
+  assert.equal(deployment('production').names.web, 'weave-web')
+  assert.equal(deployment('staging').names.agents, 'weave-agents-staging')
+  assert.equal(deployment('pr-123').database, 'weave-auth-pr-123')
+  assert.notEqual(deployment('pr-123').database, deployment('production').database)
+  for (const target of ['main', 'feature', 'pr-0', 'pr-../main', '', undefined]) {
+    assert.throws(() => deployment(target))
   }
-  assert.notEqual(deployment('feature').database, deployment('main').database)
-  assert.equal(deployment('feature').database, deployment('feature').database)
 })
 
 test('package changes select independent deployments and workspace dependencies', () => {
@@ -29,10 +26,10 @@ test('package changes select independent deployments and workspace dependencies'
 
 test('preview auth signing secrets are deterministic and isolated', () => {
   const secret = 'a'.repeat(32)
-  assert.equal(authSecret(secret, 'main'), secret)
-  assert.equal(authSecret(secret, 'feature'), authSecret(secret, 'feature'))
-  assert.notEqual(authSecret(secret, 'feature'), authSecret(secret, 'main'))
-  assert.notEqual(authSecret(secret, 'feature'), authSecret(secret, 'other'))
+  assert.equal(authSecret(secret, 'production'), secret)
+  assert.equal(authSecret(secret, 'pr-123'), authSecret(secret, 'pr-123'))
+  assert.notEqual(authSecret(secret, 'pr-123'), authSecret(secret, 'production'))
+  assert.notEqual(authSecret(secret, 'pr-123'), authSecret(secret, 'staging'))
 })
 
 test('web forwards API requests unchanged and serves SPA assets separately', async () => {

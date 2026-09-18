@@ -1,0 +1,29 @@
+name: Clean up PR preview
+on:
+  pull_request_target:
+    branches: [main]
+    types: [closed]
+permissions:
+  contents: read
+concurrency:
+  group: cloudflare-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+jobs:
+  cleanup:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: preview
+    steps:
+      # Only trusted default-branch code. Never check out or execute PR code here.
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+      - run: node scripts/ci/cleanup.mjs
+        env:
+          DEPLOY_TARGET: pr-${{ github.event.pull_request.number }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}

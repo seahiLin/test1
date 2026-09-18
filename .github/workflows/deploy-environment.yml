@@ -1,0 +1,136 @@
+name: Deploy one environment
+
+on:
+  workflow_call:
+    inputs:
+      target:
+        required: true
+        type: string
+      environment:
+        required: true
+        type: string
+      agents:
+        required: true
+        type: boolean
+      api:
+        required: true
+        type: boolean
+      web:
+        required: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  agents:
+    if: inputs.agents
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle-agents
+          path: apps/agents/dist
+      - name: Deploy agents
+        run: node scripts/ci/deploy.mjs agents
+        env:
+          DEPLOY_TARGET: ${{ inputs.target }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          OPENROUTER_API_KEY: ${{ secrets.OPENROUTER_API_KEY }}
+
+  api:
+    needs: [agents]
+    if: always() && inputs.api && (needs.agents.result == 'success' || needs.agents.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle-api
+          path: apps/api/dist
+      - name: Deploy api
+        run: node scripts/ci/deploy.mjs api
+        env:
+          DEPLOY_TARGET: ${{ inputs.target }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          BETTER_AUTH_SECRET: ${{ secrets.BETTER_AUTH_SECRET }}
+
+  web:
+    needs: [agents, api]
+    if: always() && inputs.web && (needs.agents.result == 'success' || needs.agents.result == 'skipped') && (needs.api.result == 'success' || needs.api.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v4
+        with:
+          name: bundle-web
+          path: apps/web/dist
+      - name: Deploy web
+        run: node scripts/ci/deploy.mjs web
+        env:
+          DEPLOY_TARGET: ${{ inputs.target }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+
+  verify:
+    needs: [agents, api, web]
+    if: >-
+      always() &&
+      (needs.agents.result == 'success' || needs.agents.result == 'skipped') &&
+      (needs.api.result == 'success' || needs.api.result == 'skipped') &&
+      (needs.web.result == 'success' || needs.web.result == 'skipped')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: ${{ inputs.environment }}
+      url: ${{ steps.url.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - id: url
+        run: node scripts/ci/url.mjs
+        env:
+          DEPLOY_TARGET: ${{ inputs.target }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      - name: Website and API health
+        run: node scripts/ci/health.mjs
+        env:
+          TEST_BASE_URL: ${{ steps.url.outputs.url }}
+      - name: Auth, D1, private RPC and Durable Object integration
+        if: inputs.target != 'production'
+        run: pnpm test
+        env:
+          TEST_BASE_URL: ${{ steps.url.outputs.url }}

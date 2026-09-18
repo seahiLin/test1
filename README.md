@@ -74,56 +74,64 @@ TEST_MODEL=1 pnpm test # 额外验证 Flue → OpenRouter、历史读取及重�
 
 ## GitHub → Cloudflare CI/CD
 
-仓库：`git@github.com:seahiLin/test1.git`。工作流位于 `.github/workflows/deploy.yml`，所有分支的 push 自动触发，也可在 Actions 中手动运行（全量发布）。
+仓库：`git@github.com:seahiLin/test1.git`。只有 `main` 是长期集成分支，staging / production 是固定部署环境，不另建对应 Git 分支。
 
-### 首次配置
+| 事件 | 行为 |
+| --- | --- |
+| 普通功能分支 push | CI：类型检查、构建和部署脚本测试，不创建云端资源 |
+| 同仓库非 Draft PR → main | 创建/更新 `pr-<编号>` 预览；Draft 转为 ready 时创建 |
+| Fork PR | 仅 CI，不提供部署凭据或创建预览 |
+| PR 关闭或合并 | 删除该 PR 的三个 Worker 和 D1；只允许清理 `pr-<编号>` |
+| main push | 构建一次 → staging → 健康及集成测试 → production → 只读健康检查 |
+| Actions 手动运行 Deploy Cloudflare | 仅 main 有效，全量执行 staging → production |
 
-在 [GitHub Actions Secrets](https://github.com/seahiLin/test1/settings/secrets/actions) 中添加：
+### 按包发布
+
+| 改动 | 构建和发布 |
+| --- | --- |
+| `apps/web/**` | web |
+| `apps/api/**`（包括迁移） | api |
+| `apps/agents/**` | agents 和依赖其 RPC 契约的 api |
+| 根依赖清单/锁文件、workspace、TypeScript/Node 配置、`.github/**`、`scripts/ci/**`、冒烟测试 | 三个包 |
+| 仅 README 等文档 | 不发布 |
+
+首次预览、PR 重开、Draft 转 ready、无成功历史、上次失败/取消、旧提交不可用或手动运行时，全量部署。其他更新相对之前完成且成功的部署提交检测改动，避免连续推送或部分失败漏发。
+
+构建 job 不接收云端凭据；发布 job 下载同一次工作流的构建产物。staging 和 production 复用相同的前端静态文件、API bundle 和 Flue bundle，只调整资源名称、绑定、URL 和密钥。每个环境按 agents → api → web 顺序部署实际有改动的包。
+
+staging / PR 验证登录注册、D1 会话目录、会话归属、私有 RPC 及 Durable Object 历史接口；会创建带 `smoke-` 前缀的测试账号，不调用模型。production 仅验证页面、API 健康和未登录访问保护。staging 验证失败会阻止 production 发布。模型调用测试单独按需执行，避免每次 CI 消耗额度。
+
+### GitHub 与 Cloudflare 配置
+
+[GitHub Actions Secrets](https://github.com/seahiLin/test1/settings/secrets/actions)：
 
 | Secret | 用途 |
 | --- | --- |
-| `CLOUDFLARE_API_TOKEN` | 限定目标账号，授予 Account / Workers Scripts / Edit、Account / D1 / Edit、Account / Account Settings / Read 权限 |
+| `CLOUDFLARE_API_TOKEN` | 当前账号的 Workers Scripts Write、D1 Write、Account Settings Read |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare 账号 ID |
 | `BETTER_AUTH_SECRET` | 至少 32 字符的随机认证密钥 |
 | `OPENROUTER_API_KEY` | Agents 调用 OpenRouter 的密钥 |
 
-在 Cloudflare Workers & Pages 中先启用账号的 `workers.dev` 子域名。无需提前创建 Worker 或 D1：流水线按名称查询并复用 D1，不存在时创建，再执行 Drizzle SQL 迁移。生产 D1 名称为 `weave-auth`；已有同名数据库时会复用它。
+工作流引用 `preview`、`staging`、`production` 三个 GitHub Environments。staging / production 限制来自 main；preview 接受 PR 的执行引用及 main 上的清理工作流。只允许可信仓库协作者提交使用部署密钥的 PR；Fork PR 不部署。
 
-配置后在 Actions → Deploy Cloudflare → Run workflow 选择分支发布，或者重新运行第一次因缺少 Secrets 而失败的任务。最终访问地址显示在 web job 的 Summary 中：`https://weave-web.<账号子域名>.workers.dev`。
+Cloudflare 账号需启用 `workers.dev`。生产资源保持 `weave-web`、`weave-api`、`weave-agents`、`weave-auth`；staging 资源加 `-staging`；PR 资源加 `-pr-123`。各环境隔离 D1、Durable Objects 和认证签名，OpenRouter key 共用。
 
-### 按包发布
+只有 web 开启公开 `workers.dev`，它托管 SPA，将 `/api` 和 `/api/*` 原样转发给私有 api，再调用私有 agents。最终 URL 显示在工作流 Summary 和 GitHub Environments 中。
 
-| 改动 | 发布 |
-| --- | --- |
-| `apps/web/**` | web |
-| `apps/api/**`（包括迁移） | api |
-| `apps/agents/**` | agents、依赖其 RPC 契约的 api |
-| 根依赖清单/锁文件、workspace、TypeScript/Node 配置、`.github/**`、`scripts/ci/**` | 三个包 |
-| 仅 README 等文档 | 不发布 |
+D1 按环境名查询并复用，不存在时自动创建，再执行迁移。迁移先于 API 发布执行，应保持向后兼容；迁移和 Worker 发布不属于同一个事务。PR 关闭后数据随预览一起删除，重新打开会重新初始化。删除一个仍未关闭 PR 的源分支不是清理触发器，应关闭 PR；保留未关闭预览没有额外的定时 TTL。
 
-每个包有独立 job，运行类型检查后构建发布；首次创建及全量发布按 agents → api → web 排序，满足 Service Binding 的部署依赖。变更对比该分支上一次完成且成功的工作流提交，连续推送被合并排队时也不会漏掉较早提交。无历史、上次失败/取消、旧提交不可用或手动运行时，全量发布以修复可能的部分部署。
-
-### 生产和分支预览
-
-- `main` 使用 `weave-web`、`weave-api`、`weave-agents` 和 `weave-auth`。
-- 其他分支的资源名加上截短分支名及原始分支名 SHA-256 前 10 位；斜杠、大小写或截短后的名称不会直接混用。每个分支有独立 D1、Durable Objects、服务绑定和访问地址。
-- 只有 web 开启公开 `workers.dev`，它托管 SPA 静态文件，将 `/api` 和 `/api/*` 原样转发给私有 api，再由 api 调用私有 agents。无需额外购买域名或配置 `/api` 公共路由。
-- API 的认证 URL 与可信来源自动设置为该分支 web origin；预览认证签名密钥由仓库密钥和分支名派生。各分支使用相同的 OpenRouter key。
-- D1 迁移先于 API 发布执行，建议保持向后兼容；Worker 上传和数据库迁移不是同一个事务。
-- 删除 Git 分支不会自动删除云端资源或数据，需要在 Cloudflare 中手动清理对应的三个 Worker 和 D1。
-
-本地开发仍使用原有配置。流水线临时生成 `wrangler.ci.json`，Agents 构建时临时应用分支名称并让 Flue 生成最终 DO 配置；这些文件和密钥文件不提交 Git。
+清理工作流使用 `pull_request_target: closed`，只检出可信 main，从事件中读取数字 PR 编号，绝不检出或执行 PR 代码。部署与清理使用同一 PR 并发锁。
 
 ```sh
-node --test scripts/ci/*.test.mjs # 分支隔离、按包变更、认证隔离、API 转发测试
+node --test scripts/ci/*.test.mjs
 ```
 
-实现依据：[Cloudflare Static Assets](https://developers.cloudflare.com/workers/static-assets/)、[Service Bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/)、[D1 Migrations](https://developers.cloudflare.com/d1/reference/migrations/)。
+本地开发配置保持不变，临时 CI 配置和密钥均不提交 Git。参考：[GitHub Flow](https://docs.github.com/en/get-started/using-github/github-flow)、[Cloudflare Static Assets](https://developers.cloudflare.com/workers/static-assets/)、[Service Bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/)。
 
 Flue 相关文件：`apps/agents/src/agents/assistant.ts` 定义模型与提示词，`vite.config.ts` 配置生成过程，`wrangler.jsonc` 保存 `FlueAssistantAgent` 的 SQLite 迁移。不要直接编辑生成目录。修改模型时也应核对 assistant.ts 的模型能力配置（当前使用 DeepSeek 免费版的 1048576 上下文及零价格元数据，应用单次输出上限设为 16384 token；零价格不保证模型端点仍可用）。
 
 Flue 生成的 Durable Object 类名由 Agent 函数名决定。已有数据后不要直接重命名 `Assistant`；需要配套的 Durable Object 迁移。
 
-配置 GitHub Secrets 后，分支推送将自动创建所需云端资源并发布。邮箱密码登录已启用；邮件验证、密码找回邮件和业务级模型配额尚未配置。
+配置 GitHub Secrets 后，main 推送和非 Draft PR 将按上述规则创建资源并发布。邮箱密码登录已启用；邮件验证、密码找回邮件和业务级模型配额尚未配置。
 
 参考：[Flue Cloudflare](https://flueframework.com/docs/ecosystem/deploy/cloudflare/)、[Flue React](https://flueframework.com/docs/guide/react/)、[TanStack Router](https://tanstack.com/router/latest/docs/installation/with-vite)、[shadcn/ui](https://ui.shadcn.com/docs/installation/manual)、[Better Auth / Hono](https://better-auth.com/docs/integrations/hono)、[Cloudflare RPC](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/rpc/)、[DeepSeek V4 Flash 0731 (free)](https://openrouter.ai/deepseek/deepseek-v4-flash-0731:free)。
